@@ -1,2 +1,6 @@
-worker/node_modules/
-worker/.wrangler/
+node_modules/
+.wrangler/
+.env
+.env.local
+.dev.vars
+*.log
