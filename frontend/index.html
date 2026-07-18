@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>GitHub Repo Editor</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  button { cursor: pointer; padding: 0.4rem 0.8rem; margin: 0.2rem; }
+  #file-list li { cursor: pointer; padding: 0.2rem 0; }
+  #file-list li:hover { text-decoration: underline; }
+  textarea { width: 100%; height: 300px; font-family: monospace; }
+  .hidden { display: none; }
+  .row { display: flex; gap: 2rem; }
+  #file-list { list-style: none; padding: 0; min-width: 220px; }
+</style>
+</head>
+<body>
+
+<h1>GitHub Repo Editor (Demo)</h1>
+
+<!-- Login -->
+<div id="login-view">
+  <button id="login-btn">Mit GitHub einloggen</button>
+</div>
+
+<!-- Dashboard: Projekte anlegen / importieren -->
+<div id="dashboard-view" class="hidden">
+  <p>Angemeldet als <strong id="username"></strong>
+     <button id="logout-btn">Logout</button></p>
+
+  <h2>Neues Projekt</h2>
+  <input id="new-project-name" placeholder="Projektname" />
+  <button id="create-project-btn">Anlegen (erstellt Repo)</button>
+
+  <h2>Vorhandenes Projekt importieren</h2>
+  <select id="repo-select"></select>
+  <button id="import-project-btn">Importieren</button>
+</div>
+
+<!-- Editor -->
+<div id="editor-view" class="hidden">
+  <p><button id="back-btn">&larr; Zur Projektliste</button>
+     <strong id="project-name"></strong></p>
+
+  <div>
+    <input type="file" id="upload-input" multiple />
+    <button id="delete-selected-btn">Ausgewählte löschen</button>
+  </div>
+
+  <div class="row">
+    <ul id="file-list"></ul>
+    <div style="flex:1">
+      <div id="rename-row" class="hidden">
+        <input id="rename-input" />
+        <button id="rename-btn">Umbenennen/Verschieben</button>
+      </div>
+      <textarea id="editor-textarea" placeholder="Datei auswählen..."></textarea>
+      <br />
+      <button id="save-btn">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import "./app.js";
+
+const $ = (id) => document.getElementById(id);
+
+let currentFile = null; // { path, sha }
+let selectedPaths = new Set();
+
+function showView(view) {
+  ["login-view", "dashboard-view", "editor-view"].forEach((id) =>
+    $(id).classList.toggle("hidden", id !== view)
+  );
+}
+
+async function renderFileList() {
+  const files = await App.refreshFileTree();
+  const list = $("file-list");
+  list.innerHTML = "";
+  for (const f of files) {
+    const li = document.createElement("li");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.onchange = () => {
+      checkbox.checked ? selectedPaths.add(f.path) : selectedPaths.delete(f.path);
+    };
+    const label = document.createElement("span");
+    label.textContent = " " + f.path;
+    label.onclick = () => loadFileIntoEditor(f.path);
+    li.appendChild(checkbox);
+    li.appendChild(label);
+    list.appendChild(li);
+  }
+}
+
+async function loadFileIntoEditor(path) {
+  const { content, sha } = await App.openFile(path);
+  currentFile = { path, sha };
+  $("editor-textarea").value = content;
+  $("rename-row").classList.remove("hidden");
+  $("rename-input").value = path;
+}
+
+// -- Login --------------------------------------------------------------
+$("login-btn").onclick = () => App.redirectToGitHubLogin();
+$("logout-btn").onclick = () => App.logout();
+
+// -- Projekt anlegen / importieren ---------------------------------------
+$("create-project-btn").onclick = async () => {
+  const name = $("new-project-name").value.trim();
+  if (!name) return;
+  const project = await App.createNewProject(name);
+  await enterEditor(project);
+};
+
+$("import-project-btn").onclick = async () => {
+  const full = $("repo-select").value; // "owner/repo"
+  const [owner, repo] = full.split("/");
+  const project = await App.importExistingProject(owner, repo);
+  await enterEditor(project);
+};
+
+$("back-btn").onclick = () => showView("dashboard-view");
+
+async function enterEditor(project) {
+  $("project-name").textContent = `${project.owner}/${project.repo}`;
+  await App.openProject(project);
+  await renderFileList();
+  showView("editor-view");
+}
+
+// Wenn sich ein anderer Client / GitHub selbst Änderungen macht -> Liste neu laden
+window.addEventListener("repo-updated", () => renderFileList());
+
+// -- Speichern ------------------------------------------------------------
+$("save-btn").onclick = async () => {
+  if (!currentFile) return;
+  const content = $("editor-textarea").value;
+  const result = await App.saveFile(currentFile.path, content, currentFile.sha);
+  currentFile.sha = result.content.sha;
+  await renderFileList();
+};
+
+// -- Umbenennen / Verschieben ----------------------------------------------
+$("rename-btn").onclick = async () => {
+  if (!currentFile) return;
+  const newPath = $("rename-input").value.trim();
+  if (!newPath || newPath === currentFile.path) return;
+  await App.renameOrMoveFile(currentFile.path, newPath, $("editor-textarea").value);
+  currentFile.path = newPath;
+  await renderFileList();
+};
+
+// -- Löschen ----------------------------------------------------------------
+$("delete-selected-btn").onclick = async () => {
+  if (selectedPaths.size === 0) return;
+  await App.deleteFilesOrFolder([...selectedPaths]);
+  selectedPaths.clear();
+  currentFile = null;
+  $("editor-textarea").value = "";
+  await renderFileList();
+};
+
+// -- Upload -------------------------------------------------------------
+$("upload-input").onchange = async (e) => {
+  const files = [...e.target.files];
+  const payload = await Promise.all(
+    files.map(
+      (f) =>
+        new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({ path: f.name, content: reader.result });
+          reader.readAsText(f);
+        })
+    )
+  );
+  await App.uploadFiles(payload);
+  e.target.value = "";
+  await renderFileList();
+};
+
+// -- Start ----------------------------------------------------------------
+(async function init() {
+  await App.handleOAuthRedirectIfPresent();
+  const loggedIn = await App.tryRestoreSession();
+  if (!loggedIn) {
+    showView("login-view");
+    return;
+  }
+  $("username").textContent = App.getCurrentUser().login;
+  const repos = await App.listMyRepos();
+  const select = $("repo-select");
+  select.innerHTML = repos
+    .map((r) => `<option value="${r.full_name}">${r.full_name}</option>`)
+    .join("");
+  showView("dashboard-view");
+})();
+</script>
+</body>
+</html>

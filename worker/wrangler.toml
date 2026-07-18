@@ -1,0 +1,12 @@
+name = "github-editor-worker"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+# Öffentliche Variablen (Secrets separat via `wrangler secret put` setzen):
+#   GITHUB_CLIENT_SECRET
+#   GITHUB_WEBHOOK_SECRET
+#   SUPABASE_SERVICE_ROLE_KEY
+[vars]
+GITHUB_CLIENT_ID = "DEINE_GITHUB_CLIENT_ID"
+SUPABASE_URL = "https://DEINPROJEKT.supabase.co"
+ALLOWED_ORIGIN = "https://<dein-username>.github.io"
