@@ -8,7 +8,6 @@ const GITHUB_CLIENT_ID = "DEINE_GITHUB_CLIENT_ID";
 const WORKER_URL = "https://github-editor-worker.DEIN-SUBDOMAIN.workers.dev";
 const SUPABASE_URL = "https://DEINPROJEKT.supabase.co";
 const SUPABASE_ANON_KEY = "DEIN_SUPABASE_ANON_KEY";
-const GITHUB_WEBHOOK_SECRET = "muss-mit-worker-secret-uebereinstimmen";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -79,19 +78,32 @@ function logout() {
 // 2. Projekte: anlegen / importieren
 // -----------------------------------------------------------------------
 
+async function registerWebhookViaWorker(owner, repo) {
+  const token = localStorage.getItem("gh_token");
+  const resp = await fetch(`${WORKER_URL}/create-webhook`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ owner, repo }),
+  });
+  const data = await resp.json();
+  if (data.error) {
+    console.error("Webhook-Erstellung fehlgeschlagen:", data.error);
+    throw new Error(data.error);
+  }
+  return data;
+}
+
 async function createNewProject(name) {
   const repo = await github.createRepo(name, { private: true });
-  await github.ensureWebhook(
-    repo.owner.login,
-    repo.name,
-    `${WORKER_URL}/webhook`,
-    GITHUB_WEBHOOK_SECRET
-  );
+  await registerWebhookViaWorker(repo.owner.login, repo.name);
   return { owner: repo.owner.login, repo: repo.name, branch: repo.default_branch };
 }
 
 async function importExistingProject(owner, repoName) {
-  await github.ensureWebhook(owner, repoName, `${WORKER_URL}/webhook`, GITHUB_WEBHOOK_SECRET);
+  await registerWebhookViaWorker(owner, repoName);
   const branch = await github.getDefaultBranch(owner, repoName);
   return { owner, repo: repoName, branch };
 }

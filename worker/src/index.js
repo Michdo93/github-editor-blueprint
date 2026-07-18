@@ -31,6 +31,10 @@ export default {
       return handleWebhook(request, env);
     }
 
+    if (url.pathname === "/create-webhook" && request.method === "POST") {
+      return handleCreateWebhook(request, env);
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };
@@ -85,7 +89,98 @@ async function handleOAuthToken(request, env) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Webhook-Empfänger (GitHub "push" Event)
+// 2. Webhook auf einem Repo anlegen -- GITHUB_WEBHOOK_SECRET bleibt hier,
+//    verlässt den Worker nie in Richtung Browser.
+// ---------------------------------------------------------------------------
+async function handleCreateWebhook(request, env) {
+  const headers = corsHeaders(env);
+  try {
+    const authHeader = request.headers.get("Authorization") || "";
+    const userToken = authHeader.replace(/^Bearer\s+/i, "");
+    if (!userToken) {
+      return new Response(JSON.stringify({ error: "Kein Nutzer-Token übergeben" }), {
+        status: 401,
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+    }
+
+    const { owner, repo } = await request.json();
+    if (!owner || !repo) {
+      return new Response(JSON.stringify({ error: "owner/repo fehlt" }), {
+        status: 400,
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+    }
+
+    const ghHeaders = {
+      Authorization: `Bearer ${userToken}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "User-Agent": "github-editor-worker",
+    };
+    const webhookTargetUrl = `${env.WORKER_PUBLIC_URL}/webhook`;
+
+    // Prüfen, ob der Webhook schon existiert
+    const listResp = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/hooks`,
+      { headers: ghHeaders }
+    );
+    if (!listResp.ok) {
+      const text = await listResp.text();
+      return new Response(JSON.stringify({ error: `GitHub API: ${text}` }), {
+        status: listResp.status,
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+    }
+    const existingHooks = await listResp.json();
+    const alreadyExists = existingHooks.some(
+      (h) => h.config?.url === webhookTargetUrl
+    );
+    if (alreadyExists) {
+      return new Response(JSON.stringify({ status: "already-exists" }), {
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+    }
+
+    const createResp = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/hooks`,
+      {
+        method: "POST",
+        headers: ghHeaders,
+        body: JSON.stringify({
+          name: "web",
+          active: true,
+          events: ["push"],
+          config: {
+            url: webhookTargetUrl,
+            content_type: "json",
+            secret: env.GITHUB_WEBHOOK_SECRET, // bleibt serverseitig, geht nie an den Browser
+          },
+        }),
+      }
+    );
+
+    if (!createResp.ok) {
+      const text = await createResp.text();
+      return new Response(JSON.stringify({ error: `GitHub API: ${text}` }), {
+        status: createResp.status,
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ status: "created" }), {
+      headers: { ...headers, "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers: { ...headers, "Content-Type": "application/json" },
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Webhook-Empfänger (GitHub "push" Event)
 // ---------------------------------------------------------------------------
 async function handleWebhook(request, env) {
   const rawBody = await request.text();

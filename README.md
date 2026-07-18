@@ -49,10 +49,16 @@ npm install
 npx wrangler secret put GITHUB_CLIENT_SECRET
 npx wrangler secret put GITHUB_WEBHOOK_SECRET
 npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-# GITHUB_CLIENT_ID, SUPABASE_URL als normale vars in wrangler.toml eintragen
+# GITHUB_CLIENT_ID, SUPABASE_URL, WORKER_PUBLIC_URL als normale vars in wrangler.toml eintragen
 npx wrangler deploy
 ```
-Du bekommst eine URL wie `https://github-editor-worker.<du>.workers.dev`.
+Du bekommst eine URL wie `https://github-editor-worker.<du>.workers.dev`. Diese URL trägst du
+danach als `WORKER_PUBLIC_URL` in `wrangler.toml` ein und deployst einmal erneut
+(`npx wrangler deploy`), damit der Worker seine eigene URL kennt (für die Webhook-Zielangabe).
+
+> `GITHUB_WEBHOOK_SECRET` existiert nur noch als Worker-Secret, nicht mehr im Frontend-Code.
+> Die Webhook-Erstellung läuft über den Worker-Endpunkt `POST /create-webhook`
+> (Nutzer-Token im `Authorization`-Header), damit der Secret niemals im Browser sichtbar ist.
 
 ### 3. Supabase Projekt anlegen
 - Neues Projekt auf supabase.com

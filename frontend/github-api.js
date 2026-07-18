@@ -46,26 +46,8 @@ export class GitHubClient {
     });
   }
 
-  // Webhook auf einem Repo anlegen, damit der Worker "push"-Events bekommt
-  async ensureWebhook(owner, repo, webhookUrl, webhookSecret) {
-    const hooks = await this._fetch(`/repos/${owner}/${repo}/hooks`);
-    const exists = hooks.some((h) => h.config?.url === webhookUrl);
-    if (exists) return;
-
-    return this._fetch(`/repos/${owner}/${repo}/hooks`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: "web",
-        active: true,
-        events: ["push"],
-        config: {
-          url: webhookUrl,
-          content_type: "json",
-          secret: webhookSecret,
-        },
-      }),
-    });
-  }
+  // Webhook-Erstellung läuft jetzt serverseitig über den Worker (POST /create-webhook),
+  // damit GITHUB_WEBHOOK_SECRET niemals im Browser-Code sichtbar ist. Siehe app.js.
 
   // -- Dateibaum lesen (rekursiv, ein API-Call) -------------------------
 

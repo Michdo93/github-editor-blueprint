@@ -10,3 +10,6 @@ compatibility_date = "2026-07-01"
 GITHUB_CLIENT_ID = "DEINE_GITHUB_CLIENT_ID"
 SUPABASE_URL = "https://DEINPROJEKT.supabase.co"
 ALLOWED_ORIGIN = "https://<dein-username>.github.io"
+# Die eigene öffentliche Worker-URL -- kein Geheimnis, wird nur gebraucht,
+# damit der Worker weiß, wohin GitHub die Webhook-Payloads schicken soll.
+WORKER_PUBLIC_URL = "https://github-editor-worker.github-editor.workers.dev"
