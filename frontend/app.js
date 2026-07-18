@@ -4,10 +4,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // -----------------------------------------------------------------------
 // Konfiguration -- hier deine eigenen Werte eintragen
 // -----------------------------------------------------------------------
-const GITHUB_CLIENT_ID = "DEINE_GITHUB_CLIENT_ID";
-const WORKER_URL = "https://github-editor-worker.DEIN-SUBDOMAIN.workers.dev";
-const SUPABASE_URL = "https://DEINPROJEKT.supabase.co";
-const SUPABASE_ANON_KEY = "DEIN_SUPABASE_ANON_KEY";
+const GITHUB_CLIENT_ID = "Ov23liluThOliQxcwZJP";
+const WORKER_URL = "https://github-editor-worker.github-editor.workers.dev";
+const SUPABASE_URL = "https://ihsjjbhxyiyolobdlnxl.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imloc2pqYmh4eWl5b2xvYmRsbnhsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzODUzMzgsImV4cCI6MjA5OTk2MTMzOH0.iU1UGYVgdfRFEtGXlQqyb24NytSdtRypdcpDR2JW1fg";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -15,6 +15,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let github = null; // GitHubClient-Instanz nach Login
 let currentUser = null;
 let currentProject = null; // { owner, repo, branch }
+let lastFiles = []; // zuletzt geladener flacher Dateibaum (für Ordner-Rename/-Delete)
 let realtimeChannel = null;
 
 // -----------------------------------------------------------------------
@@ -125,7 +126,32 @@ async function openProject(project) {
 async function refreshFileTree() {
   const { owner, repo, branch } = currentProject;
   const tree = await github.getTree(owner, repo, branch);
-  return tree.tree.filter((entry) => entry.type === "blob"); // nur Dateien, keine Ordner-Knoten
+  lastFiles = tree.tree.filter((entry) => entry.type === "blob");
+  return lastFiles;
+}
+
+async function createFile(path) {
+  const { owner, repo, branch } = currentProject;
+  await github.createFile(owner, repo, branch, path, "");
+  return refreshFileTree();
+}
+
+async function createFolder(path) {
+  const { owner, repo, branch } = currentProject;
+  await github.createFolder(owner, repo, branch, path);
+  return refreshFileTree();
+}
+
+async function renamePathEntry(oldPath, newPath, isFolder) {
+  const { owner, repo, branch } = currentProject;
+  await github.renamePath(owner, repo, branch, oldPath, newPath, isFolder, lastFiles);
+  return refreshFileTree();
+}
+
+async function deletePathEntry(path, isFolder) {
+  const { owner, repo, branch } = currentProject;
+  await github.deletePath(owner, repo, branch, path, isFolder, lastFiles);
+  return refreshFileTree();
 }
 
 async function openFile(path) {
@@ -206,5 +232,9 @@ window.App = {
   renameOrMoveFile,
   deleteFilesOrFolder,
   uploadFiles,
+  createFile,
+  createFolder,
+  renamePathEntry,
+  deletePathEntry,
   getCurrentUser: () => currentUser,
 };

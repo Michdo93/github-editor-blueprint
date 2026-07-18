@@ -101,7 +101,7 @@ export class GitHubClient {
   // Damit lassen sich Rename, Move, Ordner-Löschung (mehrere delete-Einträge)
   // und Bulk-Upload (mehrere content-Einträge) als ein atomarer Commit abbilden.
 
-  async commitChanges(owner, repo, branch, changes, message) {
+  async commitChanges(owner, repo, branch, changes, message, _attempt = 1) {
     const refData = await this._fetch(`/repos/${owner}/${repo}/git/ref/heads/${branch}`);
     const baseCommitSha = refData.object.sha;
 
@@ -130,29 +130,80 @@ export class GitHubClient {
       }
     }
 
-    const newTree = await this._fetch(`/repos/${owner}/${repo}/git/trees`, {
-      method: "POST",
-      body: JSON.stringify({ base_tree: baseTreeSha, tree: treeEntries }),
-    });
+    try {
+      const newTree = await this._fetch(`/repos/${owner}/${repo}/git/trees`, {
+        method: "POST",
+        body: JSON.stringify({ base_tree: baseTreeSha, tree: treeEntries }),
+      });
 
-    const newCommit = await this._fetch(`/repos/${owner}/${repo}/git/commits`, {
-      method: "POST",
-      body: JSON.stringify({
-        message,
-        tree: newTree.sha,
-        parents: [baseCommitSha],
-      }),
-    });
+      const newCommit = await this._fetch(`/repos/${owner}/${repo}/git/commits`, {
+        method: "POST",
+        body: JSON.stringify({
+          message,
+          tree: newTree.sha,
+          parents: [baseCommitSha],
+        }),
+      });
 
-    await this._fetch(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
-      method: "PATCH",
-      body: JSON.stringify({ sha: newCommit.sha }),
-    });
+      await this._fetch(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+        method: "PATCH",
+        body: JSON.stringify({ sha: newCommit.sha }),
+      });
 
-    return newCommit;
+      return newCommit;
+    } catch (err) {
+      // GitHub-seitige Replikations-Verzögerung (GitRPC::BadObjectState) -- kurz warten, erneut versuchen
+      const isReplicationRace = /BadObjectState/i.test(String(err));
+      if (isReplicationRace && _attempt < 4) {
+        await new Promise((r) => setTimeout(r, 600 * _attempt));
+        return this.commitChanges(owner, repo, branch, changes, message, _attempt + 1);
+      }
+      throw err;
+    }
   }
 
   // Komfort-Funktionen oben drauf, die intern commitChanges nutzen:
+
+  createFile(owner, repo, branch, path, content = "") {
+    return this.commitChanges(owner, repo, branch, [{ path, content }], `Create ${path}`);
+  }
+
+  // Git kennt keine leeren Ordner -- ein .gitkeep sorgt dafür, dass der Ordner im Baum erscheint.
+  createFolder(owner, repo, branch, folderPath) {
+    return this.commitChanges(
+      owner,
+      repo,
+      branch,
+      [{ path: `${folderPath}/.gitkeep`, content: "" }],
+      `Create folder ${folderPath}`
+    );
+  }
+
+  // allFiles = kompletter flacher Dateibaum (aus getTree), um Ordner-Inhalte zu finden
+  async renamePath(owner, repo, branch, oldPath, newPath, isFolder, allFiles) {
+    if (!isFolder) {
+      const { content } = await this.getFileContent(owner, repo, oldPath, branch);
+      return this.moveFile(owner, repo, branch, oldPath, newPath, content);
+    }
+
+    const affected = allFiles.filter((f) => f.path.startsWith(`${oldPath}/`));
+    const changes = [];
+    for (const f of affected) {
+      const { content } = await this.getFileContent(owner, repo, f.path, branch);
+      const rest = f.path.slice(oldPath.length); // z.B. "/unterordner/datei.txt"
+      changes.push({ path: `${newPath}${rest}`, content });
+      changes.push({ path: f.path, delete: true });
+    }
+    return this.commitChanges(owner, repo, branch, changes, `Rename folder ${oldPath} -> ${newPath}`);
+  }
+
+  deletePath(owner, repo, branch, path, isFolder, allFiles) {
+    if (!isFolder) {
+      return this.deleteMultiple(owner, repo, branch, [path]);
+    }
+    const affected = allFiles.filter((f) => f.path.startsWith(`${path}/`));
+    return this.deleteMultiple(owner, repo, branch, affected.map((f) => f.path));
+  }
 
   moveFile(owner, repo, branch, oldPath, newPath, content) {
     return this.commitChanges(

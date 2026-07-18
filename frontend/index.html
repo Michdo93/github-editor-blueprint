@@ -6,12 +6,25 @@
 <style>
   body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
   button { cursor: pointer; padding: 0.4rem 0.8rem; margin: 0.2rem; }
-  #file-list li { cursor: pointer; padding: 0.2rem 0; }
-  #file-list li:hover { text-decoration: underline; }
   textarea { width: 100%; height: 300px; font-family: monospace; }
   .hidden { display: none; }
   .row { display: flex; gap: 2rem; }
-  #file-list { list-style: none; padding: 0; min-width: 220px; }
+  .toolbar { margin-bottom: 0.5rem; }
+
+  #file-tree { list-style: none; padding: 0; min-width: 260px; }
+  .tree-node { }
+  .tree-row {
+    display: flex; align-items: center; gap: 0.3rem;
+    padding: 0.15rem 0.3rem; cursor: pointer; border-radius: 4px;
+  }
+  .tree-row:hover { background: #eee; }
+  .tree-row:hover .tree-actions { visibility: visible; }
+  .tree-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tree-actions { visibility: hidden; display: flex; gap: 0.2rem; }
+  .tree-actions button { padding: 0 0.3rem; margin: 0; font-size: 0.8rem; }
+  .tree-children { margin-left: 1.1rem; }
+  .folder-icon::before { content: "📁 "; }
+  .file-icon::before { content: "📄 "; }
 </style>
 </head>
 <body>
@@ -42,18 +55,15 @@
   <p><button id="back-btn">&larr; Zur Projektliste</button>
      <strong id="project-name"></strong></p>
 
-  <div>
+  <div class="toolbar">
+    <button id="new-file-btn">+ Neue Datei</button>
+    <button id="new-folder-btn">+ Neuer Ordner</button>
     <input type="file" id="upload-input" multiple />
-    <button id="delete-selected-btn">Ausgewählte löschen</button>
   </div>
 
   <div class="row">
-    <ul id="file-list"></ul>
+    <div id="file-tree"></div>
     <div style="flex:1">
-      <div id="rename-row" class="hidden">
-        <input id="rename-input" />
-        <button id="rename-btn">Umbenennen/Verschieben</button>
-      </div>
       <textarea id="editor-textarea" placeholder="Datei auswählen..."></textarea>
       <br />
       <button id="save-btn">Speichern</button>
@@ -67,7 +77,7 @@ import "./app.js";
 const $ = (id) => document.getElementById(id);
 
 let currentFile = null; // { path, sha }
-let selectedPaths = new Set();
+let expandedFolders = new Set();
 
 function showView(view) {
   ["login-view", "dashboard-view", "editor-view"].forEach((id) =>
@@ -75,32 +85,128 @@ function showView(view) {
   );
 }
 
-async function renderFileList() {
-  const files = await App.refreshFileTree();
-  const list = $("file-list");
-  list.innerHTML = "";
+// Flache Dateiliste (aus getTree) in einen verschachtelten Ordnerbaum umwandeln
+function buildTree(files) {
+  const root = { folders: new Map(), files: [] };
   for (const f of files) {
-    const li = document.createElement("li");
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.onchange = () => {
-      checkbox.checked ? selectedPaths.add(f.path) : selectedPaths.delete(f.path);
-    };
-    const label = document.createElement("span");
-    label.textContent = " " + f.path;
-    label.onclick = () => loadFileIntoEditor(f.path);
-    li.appendChild(checkbox);
-    li.appendChild(label);
-    list.appendChild(li);
+    const parts = f.path.split("/");
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const folderPath = parts.slice(0, i + 1).join("/");
+      if (!node.folders.has(parts[i])) {
+        node.folders.set(parts[i], { folders: new Map(), files: [], fullPath: folderPath });
+      }
+      node = node.folders.get(parts[i]);
+    }
+    const fileName = parts[parts.length - 1];
+    if (fileName !== ".gitkeep") {
+      node.files.push({ name: fileName, path: f.path });
+    }
   }
+  return root;
+}
+
+function renderNode(node, container) {
+  // Ordner zuerst, alphabetisch, dann Dateien
+  const folderNames = [...node.folders.keys()].sort();
+  for (const name of folderNames) {
+    const child = node.folders.get(name);
+    const li = document.createElement("div");
+    li.className = "tree-node";
+
+    const row = document.createElement("div");
+    row.className = "tree-row";
+    const expanded = expandedFolders.has(child.fullPath);
+
+    const label = document.createElement("span");
+    label.className = "tree-label folder-icon";
+    label.textContent = name;
+    label.onclick = () => {
+      expanded ? expandedFolders.delete(child.fullPath) : expandedFolders.add(child.fullPath);
+      renderFileTree();
+    };
+
+    const actions = document.createElement("span");
+    actions.className = "tree-actions";
+    actions.appendChild(makeActionBtn("✏", () => renamePrompt(child.fullPath, true)));
+    actions.appendChild(makeActionBtn("🗑", () => deletePrompt(child.fullPath, true)));
+
+    row.appendChild(label);
+    row.appendChild(actions);
+    li.appendChild(row);
+
+    if (expanded) {
+      const childrenDiv = document.createElement("div");
+      childrenDiv.className = "tree-children";
+      renderNode(child, childrenDiv);
+      li.appendChild(childrenDiv);
+    }
+    container.appendChild(li);
+  }
+
+  const sortedFiles = [...node.files].sort((a, b) => a.name.localeCompare(b.name));
+  for (const f of sortedFiles) {
+    const row = document.createElement("div");
+    row.className = "tree-row";
+
+    const label = document.createElement("span");
+    label.className = "tree-label file-icon";
+    label.textContent = f.name;
+    label.onclick = () => loadFileIntoEditor(f.path);
+
+    const actions = document.createElement("span");
+    actions.className = "tree-actions";
+    actions.appendChild(makeActionBtn("✏", () => renamePrompt(f.path, false)));
+    actions.appendChild(makeActionBtn("🗑", () => deletePrompt(f.path, false)));
+
+    row.appendChild(label);
+    row.appendChild(actions);
+    container.appendChild(row);
+  }
+}
+
+function makeActionBtn(symbol, onClick) {
+  const btn = document.createElement("button");
+  btn.textContent = symbol;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    onClick();
+  };
+  return btn;
+}
+
+let lastRenderedFiles = [];
+
+async function renderFileTree() {
+  lastRenderedFiles = await App.refreshFileTree();
+  const container = $("file-tree");
+  container.innerHTML = "";
+  renderNode(buildTree(lastRenderedFiles), container);
 }
 
 async function loadFileIntoEditor(path) {
   const { content, sha } = await App.openFile(path);
   currentFile = { path, sha };
   $("editor-textarea").value = content;
-  $("rename-row").classList.remove("hidden");
-  $("rename-input").value = path;
+}
+
+async function renamePrompt(path, isFolder) {
+  const newPath = prompt(`Neuer Pfad für "${path}":`, path);
+  if (!newPath || newPath === path) return;
+  await App.renamePathEntry(path, newPath, isFolder);
+  if (currentFile?.path === path) currentFile.path = newPath;
+  await renderFileTree();
+}
+
+async function deletePrompt(path, isFolder) {
+  const label = isFolder ? "Ordner (inkl. Inhalt)" : "Datei";
+  if (!confirm(`${label} "${path}" wirklich löschen?`)) return;
+  await App.deletePathEntry(path, isFolder);
+  if (currentFile?.path === path || (isFolder && currentFile?.path.startsWith(path + "/"))) {
+    currentFile = null;
+    $("editor-textarea").value = "";
+  }
+  await renderFileTree();
 }
 
 // -- Login --------------------------------------------------------------
@@ -127,12 +233,12 @@ $("back-btn").onclick = () => showView("dashboard-view");
 async function enterEditor(project) {
   $("project-name").textContent = `${project.owner}/${project.repo}`;
   await App.openProject(project);
-  await renderFileList();
+  await renderFileTree();
   showView("editor-view");
 }
 
-// Wenn sich ein anderer Client / GitHub selbst Änderungen macht -> Liste neu laden
-window.addEventListener("repo-updated", () => renderFileList());
+// Wenn sich ein anderer Client / GitHub selbst Änderungen macht -> Baum neu laden
+window.addEventListener("repo-updated", () => renderFileTree());
 
 // -- Speichern ------------------------------------------------------------
 $("save-btn").onclick = async () => {
@@ -140,27 +246,23 @@ $("save-btn").onclick = async () => {
   const content = $("editor-textarea").value;
   const result = await App.saveFile(currentFile.path, content, currentFile.sha);
   currentFile.sha = result.content.sha;
-  await renderFileList();
 };
 
-// -- Umbenennen / Verschieben ----------------------------------------------
-$("rename-btn").onclick = async () => {
-  if (!currentFile) return;
-  const newPath = $("rename-input").value.trim();
-  if (!newPath || newPath === currentFile.path) return;
-  await App.renameOrMoveFile(currentFile.path, newPath, $("editor-textarea").value);
-  currentFile.path = newPath;
-  await renderFileList();
+// -- Neue Datei / Neuer Ordner ---------------------------------------------
+$("new-file-btn").onclick = async () => {
+  const path = prompt("Pfad der neuen Datei (z.B. src/neu.js):");
+  if (!path) return;
+  await App.createFile(path);
+  await renderFileTree();
+  await loadFileIntoEditor(path);
 };
 
-// -- Löschen ----------------------------------------------------------------
-$("delete-selected-btn").onclick = async () => {
-  if (selectedPaths.size === 0) return;
-  await App.deleteFilesOrFolder([...selectedPaths]);
-  selectedPaths.clear();
-  currentFile = null;
-  $("editor-textarea").value = "";
-  await renderFileList();
+$("new-folder-btn").onclick = async () => {
+  const path = prompt("Pfad des neuen Ordners (z.B. src/assets):");
+  if (!path) return;
+  expandedFolders.add(path);
+  await App.createFolder(path);
+  await renderFileTree();
 };
 
 // -- Upload -------------------------------------------------------------
@@ -178,7 +280,7 @@ $("upload-input").onchange = async (e) => {
   );
   await App.uploadFiles(payload);
   e.target.value = "";
-  await renderFileList();
+  await renderFileTree();
 };
 
 // -- Start ----------------------------------------------------------------
