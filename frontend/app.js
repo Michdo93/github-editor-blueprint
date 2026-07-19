@@ -4,10 +4,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // -----------------------------------------------------------------------
 // Konfiguration -- hier deine eigenen Werte eintragen
 // -----------------------------------------------------------------------
-const GITHUB_CLIENT_ID = "Ov23liluThOliQxcwZJP";
-const WORKER_URL = "https://github-editor-worker.github-editor.workers.dev";
-const SUPABASE_URL = "https://ihsjjbhxyiyolobdlnxl.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imloc2pqYmh4eWl5b2xvYmRsbnhsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzODUzMzgsImV4cCI6MjA5OTk2MTMzOH0.iU1UGYVgdfRFEtGXlQqyb24NytSdtRypdcpDR2JW1fg";
+const GITHUB_CLIENT_ID = "DEINE_GITHUB_CLIENT_ID";
+const WORKER_URL = "https://github-editor-worker.DEIN-SUBDOMAIN.workers.dev";
+const SUPABASE_URL = "https://DEINPROJEKT.supabase.co";
+const SUPABASE_ANON_KEY = "DEIN_SUPABASE_ANON_KEY";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -130,28 +130,37 @@ async function refreshFileTree() {
   return lastFiles;
 }
 
+// Nach einer selbst durchgeführten Änderung: Baum direkt aus dem zurückgegebenen Commit lesen.
+// Das vermeidet, GitHub sofort erneut nach dem "aktuellen Stand" zu fragen (Replikations-Verzögerung).
+async function refreshFromCommit(commit) {
+  const { owner, repo } = currentProject;
+  const tree = await github.getTreeFromCommit(owner, repo, commit);
+  lastFiles = tree.tree.filter((entry) => entry.type === "blob");
+  return lastFiles;
+}
+
 async function createFile(path) {
   const { owner, repo, branch } = currentProject;
-  await github.createFile(owner, repo, branch, path, "");
-  return refreshFileTree();
+  const commit = await github.createFile(owner, repo, branch, path, "");
+  return refreshFromCommit(commit);
 }
 
 async function createFolder(path) {
   const { owner, repo, branch } = currentProject;
-  await github.createFolder(owner, repo, branch, path);
-  return refreshFileTree();
+  const commit = await github.createFolder(owner, repo, branch, path);
+  return refreshFromCommit(commit);
 }
 
 async function renamePathEntry(oldPath, newPath, isFolder) {
   const { owner, repo, branch } = currentProject;
-  await github.renamePath(owner, repo, branch, oldPath, newPath, isFolder, lastFiles);
-  return refreshFileTree();
+  const commit = await github.renamePath(owner, repo, branch, oldPath, newPath, isFolder, lastFiles);
+  return refreshFromCommit(commit);
 }
 
 async function deletePathEntry(path, isFolder) {
   const { owner, repo, branch } = currentProject;
-  await github.deletePath(owner, repo, branch, path, isFolder, lastFiles);
-  return refreshFileTree();
+  const commit = await github.deletePath(owner, repo, branch, path, isFolder, lastFiles);
+  return refreshFromCommit(commit);
 }
 
 async function openFile(path) {
@@ -181,7 +190,8 @@ async function deleteFilesOrFolder(paths) {
 async function uploadFiles(fileList) {
   // fileList: Array von { path, content } -- Inhalte vorher im Frontend aus <input type="file"> auslesen
   const { owner, repo, branch } = currentProject;
-  return github.uploadMultiple(owner, repo, branch, fileList);
+  const commit = await github.uploadMultiple(owner, repo, branch, fileList);
+  return refreshFromCommit(commit);
 }
 
 // -----------------------------------------------------------------------

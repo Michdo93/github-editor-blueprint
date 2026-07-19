@@ -123,7 +123,7 @@ function renderNode(node, container) {
     label.textContent = name;
     label.onclick = () => {
       expanded ? expandedFolders.delete(child.fullPath) : expandedFolders.add(child.fullPath);
-      renderFileTree();
+      renderFileTreeFrom(lastRenderedFiles);
     };
 
     const actions = document.createElement("span");
@@ -177,11 +177,18 @@ function makeActionBtn(symbol, onClick) {
 
 let lastRenderedFiles = [];
 
-async function renderFileTree() {
-  lastRenderedFiles = await App.refreshFileTree();
+function renderFileTreeFrom(files) {
+  lastRenderedFiles = files;
   const container = $("file-tree");
   container.innerHTML = "";
-  renderNode(buildTree(lastRenderedFiles), container);
+  renderNode(buildTree(files), container);
+}
+
+// Frischer Read von GitHub -- nur für Projekt-Start und externe Änderungen (Webhook) nutzen.
+// NICHT direkt nach einer eigenen Schreibaktion aufrufen (Replikations-Verzögerung möglich)!
+async function reloadFileTreeFromGitHub() {
+  const files = await App.refreshFileTree();
+  renderFileTreeFrom(files);
 }
 
 async function loadFileIntoEditor(path) {
@@ -193,20 +200,20 @@ async function loadFileIntoEditor(path) {
 async function renamePrompt(path, isFolder) {
   const newPath = prompt(`Neuer Pfad für "${path}":`, path);
   if (!newPath || newPath === path) return;
-  await App.renamePathEntry(path, newPath, isFolder);
+  const files = await App.renamePathEntry(path, newPath, isFolder);
   if (currentFile?.path === path) currentFile.path = newPath;
-  await renderFileTree();
+  renderFileTreeFrom(files);
 }
 
 async function deletePrompt(path, isFolder) {
   const label = isFolder ? "Ordner (inkl. Inhalt)" : "Datei";
   if (!confirm(`${label} "${path}" wirklich löschen?`)) return;
-  await App.deletePathEntry(path, isFolder);
+  const files = await App.deletePathEntry(path, isFolder);
   if (currentFile?.path === path || (isFolder && currentFile?.path.startsWith(path + "/"))) {
     currentFile = null;
     $("editor-textarea").value = "";
   }
-  await renderFileTree();
+  renderFileTreeFrom(files);
 }
 
 // -- Login --------------------------------------------------------------
@@ -233,12 +240,12 @@ $("back-btn").onclick = () => showView("dashboard-view");
 async function enterEditor(project) {
   $("project-name").textContent = `${project.owner}/${project.repo}`;
   await App.openProject(project);
-  await renderFileTree();
+  await reloadFileTreeFromGitHub();
   showView("editor-view");
 }
 
 // Wenn sich ein anderer Client / GitHub selbst Änderungen macht -> Baum neu laden
-window.addEventListener("repo-updated", () => renderFileTree());
+window.addEventListener("repo-updated", () => reloadFileTreeFromGitHub());
 
 // -- Speichern ------------------------------------------------------------
 $("save-btn").onclick = async () => {
@@ -252,8 +259,8 @@ $("save-btn").onclick = async () => {
 $("new-file-btn").onclick = async () => {
   const path = prompt("Pfad der neuen Datei (z.B. src/neu.js):");
   if (!path) return;
-  await App.createFile(path);
-  await renderFileTree();
+  const files = await App.createFile(path);
+  renderFileTreeFrom(files);
   await loadFileIntoEditor(path);
 };
 
@@ -261,8 +268,8 @@ $("new-folder-btn").onclick = async () => {
   const path = prompt("Pfad des neuen Ordners (z.B. src/assets):");
   if (!path) return;
   expandedFolders.add(path);
-  await App.createFolder(path);
-  await renderFileTree();
+  const files = await App.createFolder(path);
+  renderFileTreeFrom(files);
 };
 
 // -- Upload -------------------------------------------------------------
@@ -278,9 +285,9 @@ $("upload-input").onchange = async (e) => {
         })
     )
   );
-  await App.uploadFiles(payload);
+  const updatedFiles = await App.uploadFiles(payload);
   e.target.value = "";
-  await renderFileTree();
+  renderFileTreeFrom(updatedFiles);
 };
 
 // -- Start ----------------------------------------------------------------

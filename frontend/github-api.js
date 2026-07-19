@@ -62,6 +62,12 @@ export class GitHubClient {
     return this._fetch(`/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`);
   }
 
+  // Baum direkt aus einem selbst erzeugten Commit-Objekt lesen (kein erneuter Branch-Read nötig,
+  // vermeidet Replikations-Verzögerung: der Commit ist ja gerade eben in DIESER Antwort entstanden)
+  getTreeFromCommit(owner, repo, commit) {
+    return this._fetch(`/repos/${owner}/${repo}/git/trees/${commit.tree.sha}?recursive=1`);
+  }
+
   // -- Contents API: einzelne Datei -------------------------------------
 
   async getFileContent(owner, repo, path, ref) {
@@ -153,7 +159,7 @@ export class GitHubClient {
       return newCommit;
     } catch (err) {
       // GitHub-seitige Replikations-Verzögerung (GitRPC::BadObjectState) -- kurz warten, erneut versuchen
-      const isReplicationRace = /BadObjectState/i.test(String(err));
+      const isReplicationRace = /BadObjectState|not a fast forward/i.test(String(err));
       if (isReplicationRace && _attempt < 4) {
         await new Promise((r) => setTimeout(r, 600 * _attempt));
         return this.commitChanges(owner, repo, branch, changes, message, _attempt + 1);
