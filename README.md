@@ -93,7 +93,26 @@ GitHub Actions Pages-Deploy einrichten).
    Repo offen haben, bekommen die Änderung per Supabase Realtime sofort mitgeteilt →
    Frontend lädt den betroffenen Teilbaum per Git Trees API neu.
 
+## Neu: Projekt-Verwaltung, Einstellungen, "Meine Projekte"
+
+**Zusätzlicher Setup-Schritt:** Das SQL aus `supabase/schema.sql` enthält jetzt auch die
+Tabelle `user_projects` (welche Repos wurden über den Editor angelegt/importiert). Falls dein
+Supabase-Projekt schon länger läuft, führe den **neuen unteren Teil** der Datei einmal im
+SQL-Editor nach, falls noch nicht geschehen.
+
+**Wichtig: neuer OAuth-Scope für Löschen.** `redirectToGitHubLogin()` fordert jetzt
+`repo delete_repo` statt nur `repo` an -- Repos löschen erfordert diesen zusätzlichen Scope.
+Bereits eingeloggte Nutzer müssen sich **einmal neu einloggen** (Logout-Button, dann erneut
+"Mit GitHub einloggen"), damit GitHub den Consent-Screen für die zusätzliche Berechtigung zeigt.
+
+**GitHub Pages bei privaten Repos:** GitHub Pages für private Repositories erfordert
+GitHub Pro/Team/Enterprise. Bei einem privaten Demo-Repo mit kostenlosem Plan schlägt
+"Pages aktivieren" fehl -- entweder das Repo auf öffentlich stellen oder einen bezahlten
+Plan nutzen. Sobald Pages aktiviert ist, deployt GitHub bei jedem Push auf den Default-Branch
+automatisch neu -- die App muss dafür nichts Zusätzliches tun.
+
 ## Sicherheitshinweis für die Demo
+
 Der Access-Token liegt im Frontend in `localStorage` (kein eigener Server, der Sessions
 hält). Für eine Demo/Blaupause ist das akzeptabel; für produktiven Einsatz würde man auf
 eine GitHub App mit kurzlebigen, installationsgebundenen Tokens migrieren.

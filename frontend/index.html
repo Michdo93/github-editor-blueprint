@@ -41,6 +41,9 @@
   <p>Angemeldet als <strong id="username"></strong>
      <button id="logout-btn">Logout</button></p>
 
+  <h2>Meine Projekte</h2>
+  <ul id="my-projects-list" style="list-style:none; padding:0;"></ul>
+
   <h2>Neues Projekt</h2>
   <input id="new-project-name" placeholder="Projektname" />
   <button id="create-project-btn">Anlegen (erstellt Repo)</button>
@@ -53,7 +56,26 @@
 <!-- Editor -->
 <div id="editor-view" class="hidden">
   <p><button id="back-btn">&larr; Zur Projektliste</button>
-     <strong id="project-name"></strong></p>
+     <strong id="project-name"></strong>
+     <button id="settings-btn">⚙ Einstellungen</button></p>
+
+  <div id="settings-panel" class="hidden" style="border:1px solid #ccc; padding:0.8rem; margin-bottom:0.8rem;">
+    <h3>Projekt-Einstellungen</h3>
+    <label><input type="checkbox" id="settings-private" /> Privates Repo</label><br />
+    <label>Beschreibung:<br />
+      <input id="settings-description" style="width:100%" />
+    </label><br /><br />
+    <button id="settings-save-btn">Einstellungen speichern</button>
+
+    <h4>GitHub Pages</h4>
+    <p id="pages-status">Lädt...</p>
+    <button id="pages-enable-btn" class="hidden">Pages aktivieren</button>
+    <button id="pages-disable-btn" class="hidden">Pages deaktivieren</button>
+
+    <h4>Gefahrenzone</h4>
+    <button id="rename-project-btn">Projekt umbenennen</button>
+    <button id="delete-project-btn" style="color:#b00;">Projekt löschen</button>
+  </div>
 
   <div class="toolbar">
     <button id="new-file-btn">+ Neue Datei</button>
@@ -226,11 +248,65 @@ window.addEventListener("sync-status", (e) => {
 $("login-btn").onclick = () => App.redirectToGitHubLogin();
 $("logout-btn").onclick = () => App.logout();
 
+// -- "Meine Projekte" ------------------------------------------------------
+async function renderMyProjects() {
+  const projects = await App.listMyTrackedProjects();
+  const list = $("my-projects-list");
+  list.innerHTML = "";
+  for (const p of projects) {
+    const li = document.createElement("li");
+    li.style.marginBottom = "0.3rem";
+
+    const openBtn = document.createElement("button");
+    openBtn.textContent = p.full_name;
+    openBtn.onclick = async () => {
+      const branch = await githubDefaultBranch(p);
+      await enterEditor({ owner: p.owner, repo: p.repo, branch });
+    };
+
+    const renameBtn = document.createElement("button");
+    renameBtn.textContent = "✏";
+    renameBtn.title = "Umbenennen";
+    renameBtn.onclick = async () => {
+      const newName = prompt(`Neuer Name für "${p.repo}":`, p.repo);
+      if (!newName || newName === p.repo) return;
+      await App.renameProject(p.owner, p.repo, newName);
+      await renderMyProjects();
+    };
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "🗑";
+    deleteBtn.title = "Löschen";
+    deleteBtn.style.color = "#b00";
+    deleteBtn.onclick = async () => {
+      if (!confirm(`Repo "${p.full_name}" WIRKLICH UNWIDERRUFLICH löschen?`)) return;
+      await App.deleteProject(p.owner, p.repo);
+      await renderMyProjects();
+    };
+
+    li.appendChild(openBtn);
+    li.appendChild(renameBtn);
+    li.appendChild(deleteBtn);
+    list.appendChild(li);
+  }
+  if (projects.length === 0) {
+    list.innerHTML = "<li style='color:#888'>Noch keine Projekte -- lege eins an oder importiere eins.</li>";
+  }
+}
+
+// Kleiner Helfer, um den Default-Branch beim Öffnen aus der Projektliste zu ermitteln
+async function githubDefaultBranch(p) {
+  const repos = await App.listMyRepos();
+  const match = repos.find((r) => r.full_name === p.full_name);
+  return match ? match.default_branch : "main";
+}
+
 // -- Projekt anlegen / importieren ---------------------------------------
 $("create-project-btn").onclick = async () => {
   const name = $("new-project-name").value.trim();
   if (!name) return;
   const project = await App.createNewProject(name);
+  $("new-project-name").value = "";
   await enterEditor(project);
 };
 
@@ -241,10 +317,17 @@ $("import-project-btn").onclick = async () => {
   await enterEditor(project);
 };
 
-$("back-btn").onclick = () => showView("dashboard-view");
+$("back-btn").onclick = async () => {
+  showView("dashboard-view");
+  await renderMyProjects();
+};
+
+let currentProjectRef = null;
 
 async function enterEditor(project) {
+  currentProjectRef = project;
   $("project-name").textContent = `${project.owner}/${project.repo}`;
+  $("settings-panel").classList.add("hidden");
   await App.openProject(project);
   await reloadFileTreeFromGitHub();
   showView("editor-view");
@@ -296,6 +379,83 @@ $("upload-input").onchange = async (e) => {
   renderFileTreeFrom(updatedFiles);
 };
 
+// -- Einstellungen ----------------------------------------------------------
+$("settings-btn").onclick = async () => {
+  const panel = $("settings-panel");
+  const willShow = panel.classList.contains("hidden");
+  panel.classList.toggle("hidden");
+  if (!willShow) return;
+
+  $("pages-status").textContent = "Lädt...";
+  const settings = await App.getProjectSettings(currentProjectRef.owner, currentProjectRef.repo);
+  $("settings-private").checked = settings.private;
+  $("settings-description").value = settings.description;
+  updatePagesUI(settings);
+};
+
+function updatePagesUI(settings) {
+  if (settings.pagesEnabled) {
+    $("pages-status").innerHTML = `✅ Aktiv: <a href="${settings.pagesUrl}" target="_blank">${settings.pagesUrl}</a><br>
+      <small>Jeder Push auf "${settings.defaultBranch}" deployt automatisch neu -- das übernimmt GitHub selbst, keine extra Aktion nötig.</small>`;
+    $("pages-enable-btn").classList.add("hidden");
+    $("pages-disable-btn").classList.remove("hidden");
+  } else {
+    $("pages-status").textContent = "❌ Nicht aktiviert.";
+    $("pages-enable-btn").classList.remove("hidden");
+    $("pages-disable-btn").classList.add("hidden");
+  }
+}
+
+$("settings-save-btn").onclick = async () => {
+  await App.updateProjectSettings(currentProjectRef.owner, currentProjectRef.repo, {
+    isPrivate: $("settings-private").checked,
+    description: $("settings-description").value,
+  });
+  alert("Gespeichert.");
+};
+
+$("pages-enable-btn").onclick = async () => {
+  try {
+    const settings = await App.enablePages(
+      currentProjectRef.owner,
+      currentProjectRef.repo,
+      currentProjectRef.branch
+    );
+    updatePagesUI(settings);
+  } catch (err) {
+    alert(
+      "Pages konnte nicht aktiviert werden. Hinweis: GitHub Pages für PRIVATE Repos " +
+        "erfordert GitHub Pro/Team/Enterprise. Bei privaten Repos ggf. zuerst auf " +
+        "öffentlich stellen.\n\n" + err.message
+    );
+  }
+};
+
+$("pages-disable-btn").onclick = async () => {
+  const settings = await App.disablePages(currentProjectRef.owner, currentProjectRef.repo);
+  updatePagesUI(settings);
+};
+
+$("rename-project-btn").onclick = async () => {
+  const newName = prompt(`Neuer Name für "${currentProjectRef.repo}":`, currentProjectRef.repo);
+  if (!newName || newName === currentProjectRef.repo) return;
+  await App.renameProject(currentProjectRef.owner, currentProjectRef.repo, newName);
+  currentProjectRef.repo = newName;
+  $("project-name").textContent = `${currentProjectRef.owner}/${currentProjectRef.repo}`;
+};
+
+$("delete-project-btn").onclick = async () => {
+  if (
+    !confirm(
+      `Repo "${currentProjectRef.owner}/${currentProjectRef.repo}" WIRKLICH UNWIDERRUFLICH löschen?`
+    )
+  )
+    return;
+  await App.deleteProject(currentProjectRef.owner, currentProjectRef.repo);
+  showView("dashboard-view");
+  await renderMyProjects();
+};
+
 // -- Start ----------------------------------------------------------------
 (async function init() {
   await App.handleOAuthRedirectIfPresent();
@@ -310,6 +470,7 @@ $("upload-input").onchange = async (e) => {
   select.innerHTML = repos
     .map((r) => `<option value="${r.full_name}">${r.full_name}</option>`)
     .join("");
+  await renderMyProjects();
   showView("dashboard-view");
 })();
 </script>

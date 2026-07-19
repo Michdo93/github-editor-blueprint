@@ -50,6 +50,52 @@ export class GitHubClient {
     });
   }
 
+  // -- Repo umbenennen / löschen / Einstellungen -----------------------
+  // Achtung: Löschen erfordert den zusätzlichen OAuth-Scope "delete_repo"
+  // (der normale "repo"-Scope reicht dafür NICHT aus).
+
+  renameRepo(owner, repo, newName) {
+    return this._fetch(`/repos/${owner}/${repo}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: newName }),
+    });
+  }
+
+  deleteRepo(owner, repo) {
+    return this._fetch(`/repos/${owner}/${repo}`, { method: "DELETE" });
+  }
+
+  getRepoInfo(owner, repo) {
+    return this._fetch(`/repos/${owner}/${repo}`);
+  }
+
+  updateRepoSettings(owner, repo, patch) {
+    // patch kann z.B. { private: true/false, description: "..." } enthalten
+    return this._fetch(`/repos/${owner}/${repo}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  }
+
+  async getPagesInfo(owner, repo) {
+    try {
+      return await this._fetch(`/repos/${owner}/${repo}/pages`);
+    } catch {
+      return null; // Pages ist nicht aktiviert -> GitHub antwortet mit 404
+    }
+  }
+
+  enablePages(owner, repo, branch) {
+    return this._fetch(`/repos/${owner}/${repo}/pages`, {
+      method: "POST",
+      body: JSON.stringify({ source: { branch, path: "/" } }),
+    });
+  }
+
+  disablePages(owner, repo) {
+    return this._fetch(`/repos/${owner}/${repo}/pages`, { method: "DELETE" });
+  }
+
   // Webhook-Erstellung läuft jetzt serverseitig über den Worker (POST /create-webhook),
   // damit GITHUB_WEBHOOK_SECRET niemals im Browser-Code sichtbar ist. Siehe app.js.
 

@@ -52,7 +52,7 @@ function redirectToGitHubLogin() {
   const url = new URL("https://github.com/login/oauth/authorize");
   url.searchParams.set("client_id", GITHUB_CLIENT_ID);
   url.searchParams.set("redirect_uri", REDIRECT_URI);
-  url.searchParams.set("scope", "repo"); // Repos lesen/schreiben, Webhooks anlegen
+  url.searchParams.set("scope", "repo delete_repo"); // Repos lesen/schreiben/löschen, Webhooks anlegen
   url.searchParams.set("state", crypto.randomUUID());
   window.location.href = url.toString();
 }
@@ -126,17 +126,115 @@ async function registerWebhookViaWorker(owner, repo) {
 async function createNewProject(name) {
   const repo = await github.createRepo(name, { private: true });
   await registerWebhookViaWorker(repo.owner.login, repo.name);
+  await trackProject(repo.owner.login, repo.name);
   return { owner: repo.owner.login, repo: repo.name, branch: repo.default_branch };
 }
 
 async function importExistingProject(owner, repoName) {
   await registerWebhookViaWorker(owner, repoName);
+  await trackProject(owner, repoName);
   const branch = await github.getDefaultBranch(owner, repoName);
   return { owner, repo: repoName, branch };
 }
 
 async function listMyRepos() {
   return github.listRepos();
+}
+
+// -----------------------------------------------------------------------
+// 2b. "Meine Projekte" -- welche Repos wurden über den Editor angelegt/importiert
+//     (im Unterschied zu ALLEN Repos des Nutzers, die "Importieren" zur Auswahl anbietet)
+// -----------------------------------------------------------------------
+
+async function trackProject(owner, repo) {
+  const fullName = `${owner}/${repo}`;
+  await supabase.from("user_projects").upsert(
+    {
+      github_login: currentUser.login,
+      owner,
+      repo,
+      full_name: fullName,
+    },
+    { onConflict: "full_name" }
+  );
+}
+
+async function untrackProject(owner, repo) {
+  await supabase.from("user_projects").delete().eq("full_name", `${owner}/${repo}`);
+}
+
+async function updateTrackedProject(oldOwner, oldRepo, newRepoName) {
+  await supabase
+    .from("user_projects")
+    .update({ repo: newRepoName, full_name: `${oldOwner}/${newRepoName}` })
+    .eq("full_name", `${oldOwner}/${oldRepo}`);
+}
+
+async function listMyTrackedProjects() {
+  const { data, error } = await supabase
+    .from("user_projects")
+    .select("owner, repo, full_name")
+    .eq("github_login", currentUser.login)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("Konnte Projektliste nicht laden:", error);
+    return [];
+  }
+  return data;
+}
+
+// -----------------------------------------------------------------------
+// 2c. Projekt umbenennen / löschen
+// -----------------------------------------------------------------------
+
+async function renameProject(owner, repo, newName) {
+  const updated = await github.renameRepo(owner, repo, newName);
+  await updateTrackedProject(owner, repo, newName);
+  if (currentProject?.owner === owner && currentProject?.repo === repo) {
+    currentProject = { ...currentProject, repo: newName };
+  }
+  return { owner: updated.owner.login, repo: updated.name };
+}
+
+async function deleteProject(owner, repo) {
+  await github.deleteRepo(owner, repo);
+  await untrackProject(owner, repo);
+  if (currentProject?.owner === owner && currentProject?.repo === repo) {
+    currentProject = null;
+  }
+}
+
+// -----------------------------------------------------------------------
+// 2d. Repo-Einstellungen (Sichtbarkeit, Beschreibung, GitHub Pages)
+// -----------------------------------------------------------------------
+
+async function getProjectSettings(owner, repo) {
+  const info = await github.getRepoInfo(owner, repo);
+  const pages = await github.getPagesInfo(owner, repo);
+  return {
+    private: info.private,
+    description: info.description || "",
+    defaultBranch: info.default_branch,
+    pagesEnabled: !!pages,
+    pagesUrl: pages?.html_url || null,
+  };
+}
+
+async function updateProjectSettings(owner, repo, { description, isPrivate }) {
+  return github.updateRepoSettings(owner, repo, {
+    description,
+    private: isPrivate,
+  });
+}
+
+async function enablePages(owner, repo, branch) {
+  await github.enablePages(owner, repo, branch);
+  return getProjectSettings(owner, repo);
+}
+
+async function disablePages(owner, repo) {
+  await github.disablePages(owner, repo);
+  return getProjectSettings(owner, repo);
 }
 
 // -----------------------------------------------------------------------
@@ -289,6 +387,13 @@ window.App = {
   createNewProject,
   importExistingProject,
   listMyRepos,
+  listMyTrackedProjects,
+  renameProject,
+  deleteProject,
+  getProjectSettings,
+  updateProjectSettings,
+  enablePages,
+  disablePages,
   openProject,
   refreshFileTree,
   openFile,
