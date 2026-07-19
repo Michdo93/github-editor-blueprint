@@ -19,6 +19,18 @@ let lastFiles = []; // zuletzt geladener flacher Dateibaum (für Ordner-Rename/-
 let realtimeChannel = null;
 
 // -----------------------------------------------------------------------
+// Serielle Warteschlange für schreibende GitHub-Operationen.
+// Verhindert, dass zwei Commits gleichzeitig laufen (Ursache für
+// "Update is not a fast forward" bei schnell aufeinanderfolgenden Aktionen).
+// -----------------------------------------------------------------------
+let writeQueueTail = Promise.resolve();
+function enqueueWrite(taskFn) {
+  const result = writeQueueTail.then(taskFn, taskFn); // auch nach vorherigem Fehler weitermachen
+  writeQueueTail = result.catch(() => {}); // Kette darf nie wegen eines Fehlers hängen bleiben
+  return result;
+}
+
+// -----------------------------------------------------------------------
 // 1. Login / Signup über GitHub OAuth
 // -----------------------------------------------------------------------
 
@@ -140,27 +152,43 @@ async function refreshFromCommit(commit) {
 }
 
 async function createFile(path) {
-  const { owner, repo, branch } = currentProject;
-  const commit = await github.createFile(owner, repo, branch, path, "");
-  return refreshFromCommit(commit);
+  return enqueueWrite(async () => {
+    const { owner, repo, branch } = currentProject;
+    const commit = await github.createFile(owner, repo, branch, path, "");
+    return refreshFromCommit(commit);
+  });
 }
 
 async function createFolder(path) {
-  const { owner, repo, branch } = currentProject;
-  const commit = await github.createFolder(owner, repo, branch, path);
-  return refreshFromCommit(commit);
+  return enqueueWrite(async () => {
+    const { owner, repo, branch } = currentProject;
+    const commit = await github.createFolder(owner, repo, branch, path);
+    return refreshFromCommit(commit);
+  });
 }
 
 async function renamePathEntry(oldPath, newPath, isFolder) {
-  const { owner, repo, branch } = currentProject;
-  const commit = await github.renamePath(owner, repo, branch, oldPath, newPath, isFolder, lastFiles);
-  return refreshFromCommit(commit);
+  return enqueueWrite(async () => {
+    const { owner, repo, branch } = currentProject;
+    const commit = await github.renamePath(
+      owner,
+      repo,
+      branch,
+      oldPath,
+      newPath,
+      isFolder,
+      lastFiles
+    );
+    return refreshFromCommit(commit);
+  });
 }
 
 async function deletePathEntry(path, isFolder) {
-  const { owner, repo, branch } = currentProject;
-  const commit = await github.deletePath(owner, repo, branch, path, isFolder, lastFiles);
-  return refreshFromCommit(commit);
+  return enqueueWrite(async () => {
+    const { owner, repo, branch } = currentProject;
+    const commit = await github.deletePath(owner, repo, branch, path, isFolder, lastFiles);
+    return refreshFromCommit(commit);
+  });
 }
 
 async function openFile(path) {
@@ -169,29 +197,41 @@ async function openFile(path) {
 }
 
 async function saveFile(path, content, existingSha) {
-  const { owner, repo, branch } = currentProject;
-  return github.saveFile(owner, repo, path, content, {
-    sha: existingSha,
-    branch,
-    message: `Edit ${path}`,
+  return enqueueWrite(async () => {
+    const { owner, repo, branch } = currentProject;
+    const result = await github.saveFile(owner, repo, path, content, {
+      sha: existingSha,
+      branch,
+      message: `Edit ${path}`,
+    });
+    if (result.commit) await refreshFromCommit(result.commit);
+    return result;
   });
 }
 
 async function renameOrMoveFile(oldPath, newPath, content) {
-  const { owner, repo, branch } = currentProject;
-  return github.moveFile(owner, repo, branch, oldPath, newPath, content);
+  return enqueueWrite(async () => {
+    const { owner, repo, branch } = currentProject;
+    const commit = await github.moveFile(owner, repo, branch, oldPath, newPath, content);
+    return refreshFromCommit(commit);
+  });
 }
 
 async function deleteFilesOrFolder(paths) {
-  const { owner, repo, branch } = currentProject;
-  return github.deleteMultiple(owner, repo, branch, paths);
+  return enqueueWrite(async () => {
+    const { owner, repo, branch } = currentProject;
+    const commit = await github.deleteMultiple(owner, repo, branch, paths);
+    return refreshFromCommit(commit);
+  });
 }
 
 async function uploadFiles(fileList) {
   // fileList: Array von { path, content } -- Inhalte vorher im Frontend aus <input type="file"> auslesen
-  const { owner, repo, branch } = currentProject;
-  const commit = await github.uploadMultiple(owner, repo, branch, fileList);
-  return refreshFromCommit(commit);
+  return enqueueWrite(async () => {
+    const { owner, repo, branch } = currentProject;
+    const commit = await github.uploadMultiple(owner, repo, branch, fileList);
+    return refreshFromCommit(commit);
+  });
 }
 
 // -----------------------------------------------------------------------
