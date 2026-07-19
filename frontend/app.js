@@ -38,7 +38,7 @@ function enqueueWrite(taskFn) {
   const settleAndNotify = () => {
     pendingWrites--;
     window.dispatchEvent(new CustomEvent("sync-status", { detail: { pending: pendingWrites } }));
-    return new Promise((r) => setTimeout(r, 700));
+    return new Promise((r) => setTimeout(r, 300));
   };
   writeQueueTail = result.then(settleAndNotify, settleAndNotify);
   return result;

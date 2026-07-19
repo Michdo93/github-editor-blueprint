@@ -15,6 +15,10 @@ export class GitHubClient {
   async _fetch(path, options = {}) {
     const resp = await fetch(`${API}${path}`, {
       ...options,
+      cache: "no-store", // wichtig: verhindert, dass ein gecachter, veralteter Ref-Stand
+                          // (z.B. bei /git/ref/heads/...) zu dauerhaften "not a fast forward"-
+                          // Fehlern führt, weil wir sonst denselben alten Stand aus dem
+                          // Browser-Cache statt einer frischen Antwort bekommen könnten.
       headers: {
         Authorization: `Bearer ${this.token}`,
         Accept: "application/vnd.github+json",
@@ -160,9 +164,9 @@ export class GitHubClient {
     } catch (err) {
       // GitHub-seitige Replikations-Verzögerung (GitRPC::BadObjectState) -- kurz warten, erneut versuchen
       const isReplicationRace = /BadObjectState|not a fast forward/i.test(String(err));
-      if (isReplicationRace && _attempt < 10) {
-        const jitter = Math.random() * 300;
-        const delay = Math.min(400 * 2 ** (_attempt - 1), 6000) + jitter;
+      if (isReplicationRace && _attempt < 6) {
+        const jitter = Math.random() * 150;
+        const delay = Math.min(300 * 2 ** (_attempt - 1), 2000) + jitter;
         await new Promise((r) => setTimeout(r, delay));
         return this.commitChanges(owner, repo, branch, changes, message, _attempt + 1);
       }
