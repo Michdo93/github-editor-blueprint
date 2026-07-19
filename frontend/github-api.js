@@ -160,9 +160,10 @@ export class GitHubClient {
     } catch (err) {
       // GitHub-seitige Replikations-Verzögerung (GitRPC::BadObjectState) -- kurz warten, erneut versuchen
       const isReplicationRace = /BadObjectState|not a fast forward/i.test(String(err));
-      if (isReplicationRace && _attempt < 6) {
+      if (isReplicationRace && _attempt < 10) {
         const jitter = Math.random() * 300;
-        await new Promise((r) => setTimeout(r, 500 * _attempt + jitter));
+        const delay = Math.min(400 * 2 ** (_attempt - 1), 6000) + jitter;
+        await new Promise((r) => setTimeout(r, delay));
         return this.commitChanges(owner, repo, branch, changes, message, _attempt + 1);
       }
       throw err;

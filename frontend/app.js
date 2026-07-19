@@ -24,9 +24,23 @@ let realtimeChannel = null;
 // "Update is not a fast forward" bei schnell aufeinanderfolgenden Aktionen).
 // -----------------------------------------------------------------------
 let writeQueueTail = Promise.resolve();
+let pendingWrites = 0;
+
 function enqueueWrite(taskFn) {
+  pendingWrites++;
+  window.dispatchEvent(new CustomEvent("sync-status", { detail: { pending: pendingWrites } }));
+
   const result = writeQueueTail.then(taskFn, taskFn); // auch nach vorherigem Fehler weitermachen
-  writeQueueTail = result.catch(() => {}); // Kette darf nie wegen eines Fehlers hängen bleiben
+  // Nach Abschluss (Erfolg ODER Fehler) eine kurze Pufferzeit einbauen, bevor die nächste
+  // Operation aus der Queue starten darf. GitHub braucht nach einem Commit selbst etwas Zeit,
+  // bis der neue Stand auf allen Lese-Pfaden ankommt (Replikations-Verzögerung) -- ohne diesen
+  // Puffer würde die nächste Operation sofort wieder auf einen veralteten Stand aufbauen.
+  const settleAndNotify = () => {
+    pendingWrites--;
+    window.dispatchEvent(new CustomEvent("sync-status", { detail: { pending: pendingWrites } }));
+    return new Promise((r) => setTimeout(r, 700));
+  };
+  writeQueueTail = result.then(settleAndNotify, settleAndNotify);
   return result;
 }
 

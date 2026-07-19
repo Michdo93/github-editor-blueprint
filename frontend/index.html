@@ -59,6 +59,7 @@
     <button id="new-file-btn">+ Neue Datei</button>
     <button id="new-folder-btn">+ Neuer Ordner</button>
     <input type="file" id="upload-input" multiple />
+    <span id="sync-status" style="color:#888;font-size:0.9em;"></span>
   </div>
 
   <div class="row">
@@ -215,6 +216,11 @@ async function deletePrompt(path, isFolder) {
   }
   renderFileTreeFrom(files);
 }
+
+// Sync-Status anzeigen, während im Hintergrund noch geschrieben/retried wird
+window.addEventListener("sync-status", (e) => {
+  $("sync-status").textContent = e.detail.pending > 0 ? "⏳ Synchronisiere mit GitHub …" : "";
+});
 
 // -- Login --------------------------------------------------------------
 $("login-btn").onclick = () => App.redirectToGitHubLogin();
